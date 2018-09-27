@@ -122,7 +122,13 @@ public class MemoryRecordsBuilder {
             bufferStream.position(initialPosition + Records.LOG_OVERHEAD + LegacyRecord.recordOverhead(magic));
         }
 
+        /** bufferStream 封装了ByteBuffer，为其提供了自动扩容的功能 **/
+        /** 注意，这里的类名称都是outputStream，但实际上，由于最底层的Stream是这个bufferStream（类：ByteBufferOutputStream），
+         * 数据实际上是保存到了ByteBuffer当中的。 **/
         this.bufferStream = bufferStream;
+        /** appendStream 再为bufferStream添加了压缩功能，可以看到，在下面的append方法中（无论是appendDefaultRecord 方法还是
+         * appendLegacyRecord 方法），传入的均为appendStream,即在存储Record 时，会对数据进行压缩(前提是传入的参数意义是要对数据进行压缩)，
+         * 并且当Buffer空间不够时会自动扩容 **/
         this.appendStream = new DataOutputStream(compressionType.wrapForOutput(this.bufferStream, magic));
     }
 

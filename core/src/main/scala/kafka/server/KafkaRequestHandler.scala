@@ -49,6 +49,7 @@ class KafkaRequestHandler(id: Int,
           // time_window is independent of the number of threads, each recorded idle
           // time should be discounted by # threads.
           val startSelectTime = time.nanoseconds
+          // 从队首获取数据
           req = requestChannel.receiveRequest(300)
           val endTime = time.nanoseconds
           if (req != null)

@@ -16,19 +16,19 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
-import java.nio.ByteBuffer;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
-
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Rate;
 import org.apache.kafka.common.utils.Time;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 
 /**
@@ -46,11 +46,15 @@ public class BufferPool {
     static final String WAIT_TIME_SENSOR_NAME = "bufferpool-wait-time";
 
     private final long totalMemory;
+    /** 每个BufferPool只会对特定大小的ByteBuffer进行管理，其值就是poolableSize **/
     private final int poolableSize;
     private final ReentrantLock lock;
+    /** free队列：缓存ByteBuffer对象 **/
     private final Deque<ByteBuffer> free;
+    /** 记录因申请不到足够空间而阻塞的线程 **/
     private final Deque<Condition> waiters;
-    /** This memory is accounted for separately from the poolable buffers in free. */
+    /** This memory is accounted for separately from the poolable buffers in free.
+     * 可用的空间大小，totalMemory - free队列中的全部ByteBuffer大小 */
     private long availableMemory;
     private final Metrics metrics;
     private final Time time;
@@ -102,6 +106,7 @@ public class BufferPool {
         this.lock.lock();
         try {
             // check if we have a free buffer of the right size pooled
+            /** free队列中存放的是可用的ByteBuffer，申请的空间大小是poolableSize时，直接返回空闲的资源 **/
             if (size == poolableSize && !this.free.isEmpty())
                 return this.free.pollFirst();
 
@@ -109,6 +114,8 @@ public class BufferPool {
             // memory on hand or if we need to block
             int freeListSize = freeSize() * this.poolableSize;
             if (this.availableMemory + freeListSize >= size) {
+                /** availableMemory的值是滞后的，因为free队列中的空间可能尚未被计入可用的状态（还没有加到availableMemory中），
+                 * 故需要加上freeListSize的值 **/
                 // we have enough unallocated or pooled memory to immediately
                 // satisfy the request
                 freeUp(size);
@@ -131,6 +138,7 @@ public class BufferPool {
                         long timeNs;
                         boolean waitingTimeElapsed;
                         try {
+                            /** 如果await方法返回false,表示经过了指定的等待时间，方法依旧没有返回 **/
                             waitingTimeElapsed = !moreMemory.await(remainingTimeToBlockNs, TimeUnit.NANOSECONDS);
                         } finally {
                             long endWaitNs = time.nanoseconds();
@@ -195,6 +203,8 @@ public class BufferPool {
      * buffers (if needed)
      */
     private void freeUp(int size) {
+        /** free队列不为空，说明有新的可用ByteBuffer被放回到了free队列，即 有新的空间可用，可增长availableMemory。
+         * availableMemory < size 保证只有当空间不可用时，才会尝试使用free队列中的ByteBuffer **/
         while (!this.free.isEmpty() && this.availableMemory < size)
             this.availableMemory += this.free.pollLast().capacity();
     }

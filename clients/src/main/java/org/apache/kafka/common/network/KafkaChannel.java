@@ -17,25 +17,26 @@
 package org.apache.kafka.common.network;
 
 
-import java.io.IOException;
+import org.apache.kafka.common.utils.Utils;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.nio.channels.SelectionKey;
-
 import java.security.Principal;
-
-import org.apache.kafka.common.utils.Utils;
 
 public class KafkaChannel {
     private final String id;
+    /** 封装了SocketChannel与SelectionKey **/
     private final TransportLayer transportLayer;
     private final Authenticator authenticator;
     // Tracks accumulated network thread time. This is updated on the network thread.
     // The values are read and reset after each response is sent.
     private long networkThreadTimeNanos;
     private final int maxReceiveSize;
+    /** 读缓存 **/
     private NetworkReceive receive;
+    /** 写缓存 **/
     private Send send;
     // Track connection and mute state of channels to enable outstanding requests on channels to be
     // processed after the channel is disconnected.
@@ -43,6 +44,7 @@ public class KafkaChannel {
     private boolean muted;
     private ChannelState state;
 
+    /** Client连接到broker时就会初始化一个KafkaChannel，这里的TransportLayer封装了实际的nio Channel与SelectionKey **/
     public KafkaChannel(String id, TransportLayer transportLayer, Authenticator authenticator, int maxReceiveSize) throws IOException {
         this.id = id;
         this.transportLayer = transportLayer;
@@ -107,6 +109,7 @@ public class KafkaChannel {
     }
 
     public void mute() {
+        // selector 不再监听 channel的read事件
         if (!disconnected)
             transportLayer.removeInterestOps(SelectionKey.OP_READ);
         muted = true;

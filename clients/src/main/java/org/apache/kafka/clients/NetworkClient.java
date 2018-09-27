@@ -367,6 +367,10 @@ public class NetworkClient implements KafkaClient {
             }
             // The call to build may also throw UnsupportedVersionException, if there are essential
             // fields that cannot be represented in the chosen version.
+            /** Producer发送的消息：
+             * 1、对于实际的消息数据，这里的builder.build(version) 生成的是一个ProduceRequest对象，
+             * 其中封装了TopicPartition与MemoryRecords之间的关联关系；
+             * 2、对于元数据的更新，这里的builder.build(version) 生成的是一个MetadataRequest对象 **/
             doSend(clientRequest, isInternalRequest, now, builder.build(version));
         } catch (UnsupportedVersionException e) {
             // If the version is not supported, skip sending the request over the wire.
@@ -380,6 +384,13 @@ public class NetworkClient implements KafkaClient {
         }
     }
 
+    /**
+     *
+     * @param clientRequest
+     * @param isInternalRequest
+     * @param now
+     * @param request 包含了TopicPartition与MemoryRecords之间的对应关系，即哪些消息要发送到那个topic partition
+     */
     private void doSend(ClientRequest clientRequest, boolean isInternalRequest, long now, AbstractRequest request) {
         String nodeId = clientRequest.destination();
         RequestHeader header = clientRequest.makeHeader(request.version());
@@ -393,6 +404,7 @@ public class NetworkClient implements KafkaClient {
                         header.apiVersion(), clientRequest.apiKey(), request, clientRequest.correlationId(), nodeId);
             }
         }
+        /** 得到一个 NetworkSend 对象,此对象封装了要发送的实际数据，并且数据已经被放到了ByteBuffer当中 **/
         Send send = request.toSend(nodeId, header);
         InFlightRequest inFlightRequest = new InFlightRequest(
                 header,
@@ -404,8 +416,24 @@ public class NetworkClient implements KafkaClient {
                 request,
                 send,
                 now);
+        /** inFlightRequests 底层维护了Map<String, Deque<InFlightRequest>>对象，key是NodeId，value是发送到对应Node的InFlightRequest对象集合,
+         * 这里需要注意的是：下面两条代码会使得map中消息队列的 队首请求中存储的消息 与 kafkaChannel.send 字段 指向同一消息 **/
         this.inFlightRequests.add(inFlightRequest);
+        /** 此方法将channel 在selector中注册了write事件，此外send对象也被放入到kafkaChannel中，这个对象中封装了
+         * 实际要发送的ByteBuffer数据，但并未涉及到数据的实际发送（实际发送是在此类的poll方法中完成的） **/
         selector.send(inFlightRequest.send);
+
+        /**  上面的这段代码存在一个疑问，对于生产者而言，可能存在多线程同时产生消息的情况，那么上面的selector.send方法每次都来覆盖KafkaChannel
+         * 中的send字段？（KafkaChannel.send字段保存的是实际要发送的数据，详情可以参考 ByteBufferSend类）
+         *
+         * 2018-09-19
+         *   本类中，存在一个 canSendRequest 方法，此方法 会去检测 InFlightRequests中队首消息的send字段是否是已完成状态
+         *   （具体是调用了InFlightRequests.canSendMore），如上面的注释所说的，
+         *   每次运行完当前方法后，inFlightRequests保存的 请求队列中的队首消息 与 kafkaChannel.send 字段 指向同一消息，因此在再一次发送请求时，
+         *   只需要调用canSendRequest方法判断即可（判断上次发送的消息是否已经被处理完成），可以看到，
+         *   org.apache.kafka.clients.NetworkClient#doSend(org.apache.kafka.clients.ClientRequest, boolean, long)
+         *   方法中实际上已经调用了canSendRequest来判断是否可以发送消息。
+         * **/
     }
 
     /**
@@ -428,6 +456,8 @@ public class NetworkClient implements KafkaClient {
             return responses;
         }
 
+        // 在发送消息数据前，先尝试更新元数据（包含了broker信息），这里元数据更新请求也是通过NetworkClient发送，并且发送机制与
+        // 消息信息的发送是一致的，在这个方法里，会对正在发送的消息进行判断，如果消息数据未发送完毕，则此更新元数据的请求不会被发送
         long metadataTimeout = metadataUpdater.maybeUpdate(now);
         try {
             this.selector.poll(Utils.min(timeout, metadataTimeout, requestTimeoutMs));
@@ -637,7 +667,8 @@ public class NetworkClient implements KafkaClient {
         // if no response is expected then when the send is completed, return it
         for (Send send : this.selector.completedSends()) {
             InFlightRequest request = this.inFlightRequests.lastSent(send.destination());
-            if (!request.expectResponse) {
+            if (!request.expectResponse) { // 如果该请求不需要有响应，则认为请求已经完成，
+                // 否则在接收到响应时再认为请求完成 （handleCompletedReceives方法）。
                 this.inFlightRequests.completeLastSent(send.destination());
                 responses.add(request.completed(null, now));
             }
@@ -653,6 +684,11 @@ public class NetworkClient implements KafkaClient {
     private void handleCompletedReceives(List<ClientResponse> responses, long now) {
         for (NetworkReceive receive : this.selector.completedReceives()) {
             String source = receive.source();
+            // completeNext 会从inFlightRequests中移除对应的 request
+            // 疑问：completeNext 是从inFlightRequests 中拿最后一个 request，这里为什么就确定 completedReceives 就是对该请求的响应?
+            // 2018-09-24：
+            // 首先，inFlightRequests中的消息，在send 时就存在先后顺序（ canSendMore() 方法会保证 send.complete() 之后才能发送新的request）。
+            // 此外，消息的发送使用的是tcp协议，因此会保证消息的顺序性。服务端只要按照接收的顺序来处理消息，并且以该顺序返回，就可以保证响应也是有序的。
             InFlightRequest req = inFlightRequests.completeNext(source);
             Struct responseStruct = parseStructMaybeUpdateThrottleTimeMetrics(receive.payload(), req.header,
                 throttleTimeSensor, now);
@@ -774,12 +810,13 @@ public class NetworkClient implements KafkaClient {
         }
     }
 
+    /** 辅助NetworkClient更新Metadata **/
     class DefaultMetadataUpdater implements MetadataUpdater {
 
         /* the current cluster metadata */
         private final Metadata metadata;
 
-        /* true iff there is a metadata request that has been sent and for which we have not yet received a response */
+        /* true if there is a metadata request that has been sent and for which we have not yet received a response */
         private boolean metadataFetchInProgress;
 
         DefaultMetadataUpdater(Metadata metadata) {
@@ -816,6 +853,9 @@ public class NetworkClient implements KafkaClient {
                 return reconnectBackoffMs;
             }
 
+            // 可以发送 metadata 请求的话，就发送 metadata 请求，这里包含了一个判断，就是当有消息尚未发送完成时，等待下次poll时
+            // 再发送 metadata更新请求。
+            // 注意，这里的元数据请求只是发送到 kafka broker list中的某个节点中
             return maybeUpdate(now, node);
         }
 

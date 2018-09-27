@@ -91,6 +91,8 @@ class SocketServer(val config: KafkaConfig, val metrics: Metrics, val time: Time
         val acceptor = new Acceptor(endpoint, sendBufferSize, recvBufferSize, brokerId,
           processors.slice(processorBeginIndex, processorEndIndex), connectionQuotas)
         acceptors.put(endpoint, acceptor)
+
+        /* 开启各个Acceptor线程 */
         Utils.newThread(s"kafka-socket-acceptor-$listenerName-$securityProtocol-${endpoint.port}", acceptor, false).start()
         acceptor.awaitStartup()
 
@@ -251,6 +253,7 @@ private[kafka] class Acceptor(val endPoint: EndPoint,
   private val nioSelector = NSelector.open()
   val serverChannel = openServerSocket(endPoint.host, endPoint.port)
 
+  /* 开启各个Processor线程 */
   this.synchronized {
     processors.foreach { processor =>
       Utils.newThread(s"kafka-network-thread-$brokerId-${endPoint.listenerName}-${endPoint.securityProtocol}-${processor.id}",
@@ -429,11 +432,16 @@ private[kafka] class Processor(val id: Int,
     while (isRunning) {
       try {
         // setup any new connections that have been queued up
+        // 这里为 newConnections 中的所有 channels 注册了 OP_READ 事件
         configureNewConnections()
         // register any new responses for writing
         processNewResponses()
         poll()
+        // 这里会将收到的数据放到待处理的队列尾部（requestChannel.requestQueue），而KafkaRequestHandler会从该队列的队首获取数据，
+        // 随后在 selector 上停止对 OP_READ 事件的监听。
+        // 即，读取到一条消息之后，在处理完该消息之前，不会再接收来自同一个连接的请求。
         processCompletedReceives()
+        // 响应之后，selector会再监听 channel 上的 OP_READ 事件。
         processCompletedSends()
         processDisconnected()
       } catch {
@@ -453,6 +461,7 @@ private[kafka] class Processor(val id: Int,
   }
 
   private def processNewResponses() {
+    // 从队列中取出response的同时会将其从队列中移除
     var curr = requestChannel.receiveResponse(id)
     while (curr != null) {
       try {
@@ -519,6 +528,7 @@ private[kafka] class Processor(val id: Int,
           buffer = receive.payload, startTimeNanos = time.nanoseconds,
           listenerName = listenerName, securityProtocol = securityProtocol)
         requestChannel.sendRequest(req)
+        // mute 方法会取消channel 的 OP_READ 事件，即连接不会再接收数据
         selector.mute(receive.source)
       } catch {
         case e @ (_: InvalidRequestException | _: SchemaException) =>

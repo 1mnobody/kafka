@@ -60,7 +60,7 @@ public final class ClientRequest {
 
     @Override
     public String toString() {
-        return "ClientRequest(expectResponse=" + expectResponse +
+        return "[" + Thread.currentThread().getName() + "] -- ClientRequest(expectResponse=" + expectResponse +
             ", callback=" + callback +
             ", destination=" + destination +
             ", correlationId=" + correlationId +

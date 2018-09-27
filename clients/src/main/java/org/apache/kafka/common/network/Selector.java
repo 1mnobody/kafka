@@ -16,31 +16,10 @@
  */
 package org.apache.kafka.common.network;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.nio.channels.CancelledKeyException;
-import java.nio.channels.ClosedChannelException;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.SocketChannel;
-import java.nio.channels.UnresolvedAddressException;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
-
 import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.metrics.Measurable;
 import org.apache.kafka.common.metrics.MetricConfig;
-import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
@@ -50,6 +29,13 @@ import org.apache.kafka.common.metrics.stats.Rate;
 import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.nio.channels.*;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 /**
  * A nioSelector interface for doing non-blocking multi-connection network I/O.
@@ -86,6 +72,8 @@ public class Selector implements Selectable, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(Selector.class);
 
     private final java.nio.channels.Selector nioSelector;
+    /** 维护NodeId与KafkaChannel之间的关联关系，表示生产者客户端到各个Node之间的网络连接
+     * KafkaChannel 是 SocketChannel 的上层封装 **/
     private final Map<String, KafkaChannel> channels;
     private final List<Send> completedSends;
     private final List<NetworkReceive> completedReceives;
@@ -189,6 +177,7 @@ public class Selector implements Selectable, AutoCloseable {
         socket.setTcpNoDelay(true);
         boolean connected;
         try {
+            /** 返回true表示请求的连接马上就建立好了，这个channel被保存在immediatelyConnectedKeys当中 **/
             connected = socketChannel.connect(address);
         } catch (UnresolvedAddressException e) {
             socketChannel.close();
@@ -268,6 +257,8 @@ public class Selector implements Selectable, AutoCloseable {
         else {
             KafkaChannel channel = channelOrFail(connectionId, false);
             try {
+                /** 此方法中注册了write事件，send对象中封装了实际要发送的ByteBuffer，到这里，数据准备完成，并且nio channel也注册了写事件，
+                 * 后续只需要将ByteBuffer数据写入对应的nio channel即可 **/
                 channel.setSend(send);
             } catch (Exception e) {
                 // update the state for consistency, the channel will be discarded after `close`
@@ -330,6 +321,7 @@ public class Selector implements Selectable, AutoCloseable {
         long endSelect = time.nanoseconds();
         this.sensors.selectTime.record(endSelect - startSelect, time.milliseconds());
 
+        /** 处理IO事件，包括消息的发送以及响应的接收，接收到的响应数据会被放在stagedReceives中 **/
         if (readyKeys > 0 || !immediatelyConnectedKeys.isEmpty()) {
             pollSelectionKeys(this.nioSelector.selectedKeys(), false, endSelect);
             pollSelectionKeys(immediatelyConnectedKeys, true, endSelect);
@@ -347,6 +339,7 @@ public class Selector implements Selectable, AutoCloseable {
         addToCompletedReceives();
     }
 
+    /** 此方法会处理OP_CONNECT, OP_WRITE, OP_READ 事件 **/
     void pollSelectionKeys(Iterable<SelectionKey> selectionKeys,
                                    boolean isImmediatelyConnected,
                                    long currentTimeNanos) {

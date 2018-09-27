@@ -220,7 +220,14 @@ public class Sender implements Runnable {
             }
         }
 
-        long pollTimeout = sendProducerData(now);
+        /** sendProducerData -> sendProduceRequests ->NetworkClient.send ->
+         * org.apache.kafka.common.network.Selector#send(org.apache.kafka.common.network.Send)
+         * （中间省略了部分方法），network.Selector的send方法中，会设置最终用于发送数据的Channel的状态，在Selector上
+         * 注册write事件，这个方法并没有涉及到消息数据的读写，消息的发送是在下面的poll方法中 **/
+        long pollTimeout = sendProducerData(now); // 在此方法中会将 RecordAccumulator 实例中的消息整理成一个Map，
+                                                    // 此map中的key为nodeId，而value则是要发送到kafka服务器的消息队列
+
+        /** sendProducerData 方法完成之后，KafkaChannel中的send字段已经设置好了要发送的数据，并且对应的Nio Channel也被注册了写事件 **/
         client.poll(pollTimeout, now);
     }
 
@@ -250,7 +257,7 @@ public class Sender implements Runnable {
             }
         }
 
-        // create produce requests
+        // create produce requests, 返回的Map<Integer, List<ProducerBatch>>中， key是nodeId,value是待发送的ProducerBatch集合
         Map<Integer, List<ProducerBatch>> batches = this.accumulator.drain(cluster, result.readyNodes,
                 this.maxRequestSize, now);
         if (guaranteeMessageOrder) {
@@ -290,12 +297,14 @@ public class Sender implements Runnable {
         long pollTimeout = Math.min(result.nextReadyCheckDelayMs, notReadyTimeout);
         if (!result.readyNodes.isEmpty()) {
             log.trace("Nodes with data ready to send: {}", result.readyNodes);
+            System.out.printf("Nodes with data ready to send: %s \n", result.readyNodes);
             // if some partitions are already ready to be sent, the select time would be 0;
             // otherwise if some partition already has some data accumulated but not ready yet,
             // the select time will be the time difference between now and its linger expiry time;
             // otherwise the select time will be the time difference between now and the metadata expiry time;
             pollTimeout = 0;
         }
+        // 这里的batches就是上面生成的map, key是nodeId,value是待发送的ProducerBatch集合
         sendProduceRequests(batches, now);
 
         return pollTimeout;
@@ -654,6 +663,7 @@ public class Sender implements Runnable {
         if (transactionManager != null && transactionManager.isTransactional()) {
             transactionalId = transactionManager.transactionalId();
         }
+        /** requestBuilder 中放入了要发送的数据 produceRecordsByPartition（produceRecordsByPartition包含了MemoryRecords）**/
         ProduceRequest.Builder requestBuilder = new ProduceRequest.Builder(minUsedMagic, acks, timeout,
                 produceRecordsByPartition, transactionalId);
         RequestCompletionHandler callback = new RequestCompletionHandler() {
@@ -663,6 +673,7 @@ public class Sender implements Runnable {
         };
 
         String nodeId = Integer.toString(destination);
+        /** 根据要发送的数据，构造clientRequest **/
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0, callback);
         client.send(clientRequest, now);
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);

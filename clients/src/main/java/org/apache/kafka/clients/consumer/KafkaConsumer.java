@@ -540,9 +540,11 @@ import java.util.regex.Pattern;
  * commit.
  */
 public class KafkaConsumer<K, V> implements Consumer<K, V> {
+/** KafkaConsumer是一个非线程安全的类 **/
 
     private static final Logger log = LoggerFactory.getLogger(KafkaConsumer.class);
     private static final long NO_CURRENT_THREAD = -1L;
+    /** clientId 的生成器，如没有指定clientId,则使用此字段生成一个id **/
     private static final AtomicInteger CONSUMER_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
     private static final String JMX_PREFIX = "kafka.consumer";
     static final long DEFAULT_CLOSE_TIMEOUT_MS = 30 * 1000;
@@ -550,16 +552,22 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     // Visible for testing
     final Metrics metrics;
 
+    /** Consumer的唯一标识 **/
     private final String clientId;
+    /** 控制着Consumer与服务端GroupCoordinator之间的通信逻辑，即Consumer与GroupCoordinator的通信主要通过此实例来完成 **/
     private final ConsumerCoordinator coordinator;
     private final Deserializer<K> keyDeserializer;
     private final Deserializer<V> valueDeserializer;
+    /** 负责从服务端获取消息数据 **/
     private final Fetcher<K, V> fetcher;
     private final ConsumerInterceptors<K, V> interceptors;
 
     private final Time time;
+    /** 负责与服务端的通信，底层封装了一个NetworkClient实例 **/
     private final ConsumerNetworkClient client;
+    /** 消费状态 **/
     private final SubscriptionState subscriptions;
+    /** 记录kafka的集群元数据 **/
     private final Metadata metadata;
     private final long retryBackoffMs;
     private final long requestTimeoutMs;

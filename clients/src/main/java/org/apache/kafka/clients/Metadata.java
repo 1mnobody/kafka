@@ -54,15 +54,20 @@ public final class Metadata {
     public static final long TOPIC_EXPIRY_MS = 5 * 60 * 1000;
     private static final long TOPIC_EXPIRY_NEEDS_UPDATE = -1L;
 
+    /** 两次发出更新请求的最小时间差，默认是100ms（防止更新过于频繁造成网络阻塞和服务器端压力） **/
     private final long refreshBackoffMs;
+    /** metadata过期时间， ”metadata上一次更新时间 + metadataExpireMs < 当前时间“ 时，说明需要更新metadata了 **/
     private final long metadataExpireMs;
+    /** 集群元数据的版本号，每更新成功一次，version的值就加1 **/
     private int version;
+    /** 上一次更新的时间戳 **/
     private long lastRefreshMs;
     private long lastSuccessfulRefreshMs;
     private Cluster cluster;
     private boolean needUpdate;
     /* Topics with expiry time */
     private final Map<String, Long> topics;
+    /** 元数据更新监听器集合，更新之前会通知所有的监听器 **/
     private final List<Listener> listeners;
     private final ClusterResourceListeners clusterResourceListeners;
     private boolean needMetadataForAllTopics;
@@ -125,6 +130,7 @@ public final class Metadata {
      */
     public synchronized long timeToNextUpdate(long nowMs) {
         long timeToExpire = needUpdate ? 0 : Math.max(this.lastSuccessfulRefreshMs + this.metadataExpireMs - nowMs, 0);
+        /** 保证 当前时间 距离上一次更新metadata的时间要超过避退时间 **/
         long timeToAllowUpdate = this.lastRefreshMs + this.refreshBackoffMs - nowMs;
         return Math.max(timeToExpire, timeToAllowUpdate);
     }

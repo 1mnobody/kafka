@@ -16,22 +16,7 @@
  */
 package org.apache.kafka.clients.consumer.internals;
 
-import java.io.Closeable;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import org.apache.kafka.clients.ClientRequest;
-import org.apache.kafka.clients.ClientResponse;
-import org.apache.kafka.clients.KafkaClient;
-import org.apache.kafka.clients.Metadata;
-import org.apache.kafka.clients.RequestCompletionHandler;
+import org.apache.kafka.clients.*;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.errors.DisconnectException;
 import org.apache.kafka.common.errors.InterruptException;
@@ -44,6 +29,14 @@ import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * Higher level consumer access to the network layer with basic support for request futures. This class
  * is thread-safe, but provides no synchronization for response callbacks. This guarantees that no locks
@@ -55,11 +48,14 @@ public class ConsumerNetworkClient implements Closeable {
 
     // the mutable state of this class is protected by the object's monitor (excluding the wakeup
     // flag and the request completion queue below).
+    /** 实现类为NetworkClient **/
     private final KafkaClient client;
+    /** 缓冲队列，封装了一个Map，key是Node节点，value是发往此Node的ClientRequest集合 **/
     private final UnsentRequests unsent = new UnsentRequests();
     private final Metadata metadata;
     private final Time time;
     private final long retryBackoffMs;
+    /** clientRequest 在 unsent 中缓存的超时时长 **/
     private final long unsentExpiryMs;
     private final AtomicBoolean wakeupDisabled = new AtomicBoolean();
 
@@ -220,7 +216,7 @@ public class ConsumerNetworkClient implements Closeable {
 
         synchronized (this) {
             // send all the requests we can send now
-            trySend(now);
+            trySend(now);/** trySend 完成之后，只是把数据放入到ByteBuffer中，实际的发送依旧是由client.poll来完成 **/
 
             // check whether the poll is still needed by the caller. Note that if the expected completion
             // condition becomes satisfied after the call to shouldBlock() (because of a fired completion
@@ -405,7 +401,7 @@ public class ConsumerNetworkClient implements Closeable {
             Iterator<ClientRequest> iterator = unsent.requestIterator(node);
             while (iterator.hasNext()) {
                 ClientRequest request = iterator.next();
-                if (client.ready(node, now)) {
+                if (client.ready(node, now)) {// 检查与node的连接状态，必要时建立与node的连接
                     client.send(request, now);
                     iterator.remove();
                     requestsSent = true;

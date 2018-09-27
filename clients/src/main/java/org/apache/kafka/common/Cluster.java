@@ -30,6 +30,7 @@ import java.util.Set;
 
 /**
  * A representation of a subset of the nodes, topics, and partitions in the Kafka cluster.
+ * topic的详细信息都保存在Cluster中
  */
 public final class Cluster {
 
@@ -38,7 +39,9 @@ public final class Cluster {
     private final Set<String> unauthorizedTopics;
     private final Set<String> internalTopics;
     private final Node controller;
+    /** TopicPartition 用于表示topic的某个分区 **/
     private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition;
+    /** PartitionInfo 用于表示一个分区的详细信息 **/
     private final Map<String, List<PartitionInfo>> partitionsByTopic;
     private final Map<String, List<PartitionInfo>> availablePartitionsByTopic;
     private final Map<Integer, List<PartitionInfo>> partitionsByNode;

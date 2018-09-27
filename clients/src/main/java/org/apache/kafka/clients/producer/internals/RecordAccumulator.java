@@ -76,9 +76,11 @@ public final class RecordAccumulator {
     private final CompressionType compression;
     private final long lingerMs;
     private final long retryBackoffMs;
+    /** ByteBuffer的创建和释放比较消耗资源，为了实现内存的高效利用，kafka使用BufferPool来实现ByteBuffer的复用 **/
     private final BufferPool free;
     private final Time time;
     private final ApiVersions apiVersions;
+    /** batches 是类CopyOnWriteMap的一个实例，Deque中保存了要发送到对应TopicPartition中去的数据 **/
     private final ConcurrentMap<TopicPartition, Deque<ProducerBatch>> batches;
     private final IncompleteBatches incomplete;
     // The following variables are only accessed by the sender thread, so we don't need to protect them.
@@ -203,19 +205,25 @@ public final class RecordAccumulator {
             int size = Math.max(this.batchSize, AbstractRecords.estimateSizeInBytesUpperBound(maxUsableMagic, compression, key, value, headers));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {}", size, tp.topic(), tp.partition());
             buffer = free.allocate(size, maxTimeToBlock);
-            synchronized (dq) {
+            synchronized (dq) { // 上面也有一次获取dq锁的操作，这里体现了“减少锁的持有时间”这一原则。buffer申请不需要锁的原因在于
+                // 避免一个申请大空间的线程阻塞，导致要申请小空间的线程也无法往下执行
                 // Need to check if producer is closed again after grabbing the dequeue lock.
                 if (closed)
                     throw new IllegalStateException("Cannot send after the producer is closed.");
 
+                /** 这里再次尝试从dq 里面取已有的ProducerBatch，向其中追加数据，原因在于进入到这里时，可能有其他线程
+                 * 也要发送数据到同样的TopicPartition 而创建了一个dq **/
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callback, dq);
                 if (appendResult != null) {
                     // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
                     return appendResult;
                 }
 
+                /** 往以后的dq中追加数据失败，创建新的ProducerBatch，首先使用上面申请来的buffer创建MemoryRecord，再创建
+                 * ProducerBatch，随后再将这个ProducerBatch放到dq中 **/
                 MemoryRecordsBuilder recordsBuilder = recordsBuilder(buffer, maxUsableMagic);
                 ProducerBatch batch = new ProducerBatch(tp, recordsBuilder, time.milliseconds());
+                /** ProducerBatch.tryAppend方法将消息的key value放入到ProducerBatch中 **/
                 FutureRecordMetadata future = Utils.notNull(batch.tryAppend(timestamp, key, value, headers, callback, time.milliseconds()));
 
                 dq.addLast(batch);
@@ -416,11 +424,14 @@ public final class RecordAccumulator {
      * Drain all the data for the given nodes and collate them into a list of batches that will fit within the specified
      * size on a per-node basis. This method attempts to avoid choosing the same topic-node over and over.
      *
+     * 此方法也是Sender线程调用的
+     *
      * @param cluster The current cluster metadata
      * @param nodes The list of node to drain
      * @param maxSize The maximum number of bytes to drain
      * @param now The current unix time in milliseconds
      * @return A list of {@link ProducerBatch} for each node specified with total size less than the requested maxSize.
+     *  Map<Integer, List<ProducerBatch>> key是nodeId,value是待发送的ProducerBatch集合。
      */
     public Map<Integer, List<ProducerBatch>> drain(Cluster cluster,
                                                    Set<Node> nodes,
