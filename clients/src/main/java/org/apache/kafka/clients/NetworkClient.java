@@ -689,6 +689,7 @@ public class NetworkClient implements KafkaClient {
             // 2018-09-24：
             // 首先，inFlightRequests中的消息，在send 时就存在先后顺序（ canSendMore() 方法会保证 send.complete() 之后才能发送新的request）。
             // 此外，消息的发送使用的是tcp协议，因此会保证消息的顺序性。服务端只要按照接收的顺序来处理消息，并且以该顺序返回，就可以保证响应也是有序的。
+            // 服务端的处理：Channel在接收到读事件之后会取消对读事件的关注，在处理掉当前的请求之后再恢复注册读事件。
             InFlightRequest req = inFlightRequests.completeNext(source);
             Struct responseStruct = parseStructMaybeUpdateThrottleTimeMetrics(receive.payload(), req.header,
                 throttleTimeSensor, now);

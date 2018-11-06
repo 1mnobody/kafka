@@ -22,7 +22,13 @@ public class NioClient {
         DataOutputStream d = new DataOutputStream(out);
         String msg = "hello, currentTime is " + new Date();
         d.write(msg.getBytes());
-        System.out.println("消息已经发送");
+        System.out.println("消息1已经发送");
+
+//        TimeUnit.MILLISECONDS.sleep(500);
+        String msg2 = "message2  --- " + new Date();
+        d.write(msg2.getBytes());
+        System.out.println("消息2已经发送");
+
         d.close();
         out.close();
         socket.close();
