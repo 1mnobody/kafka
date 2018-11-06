@@ -1095,6 +1095,8 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         if (!records.isEmpty())
             return records;
 
+        // sendFetches 将数据放入到 ConsumerNetworkClient 实例的 unsent字段中。 这里放入到 unsent 字段中的实例为 FetchRequest 实例；
+        // 下面的client.poll 会从unsent 字段中拿到要发送的请求放入到 NetworkClient 实例的 ByteBuffer 中去。
         // send any new fetches (won't resend pending fetches)
         fetcher.sendFetches();
 
