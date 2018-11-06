@@ -60,7 +60,7 @@ public class NioServer {
 
                             // sleep5秒，模拟对消息的处理，5秒之后再注册读事件
                             TimeUnit.SECONDS.sleep(5);
-                            readChannel.register(selector, SelectionKey.OP_READ);
+                            key.interestOps(SelectionKey.OP_READ);
                         }
                     }
 
