@@ -40,7 +40,7 @@ public class NioServer {
                     if (key.isAcceptable()) {
                         SocketChannel socketChannel = ((ServerSocketChannel) key.channel()).accept();
                         socketChannel.configureBlocking(false);
-                        // 注册写事件
+                        // 注册读事件
                         socketChannel.register(selector, SelectionKey.OP_READ);
                     }
                     if (key.isReadable()) {
@@ -60,6 +60,9 @@ public class NioServer {
 
                             // sleep5秒，模拟对消息的处理，5秒之后再注册读事件
                             TimeUnit.SECONDS.sleep(5);
+                            // 这里调用 readChannel.register(selector, SelectionKey.OP_READ) 也一样，
+                            // register 的处理为  如果之前在selector中已经注册过，则返回之前的SelectionKey，但是会
+                            // 修改 ops 与 attach 的对象(如果不为空的话)，如果没有注册过，则新建一个SelectionKey
                             key.interestOps(SelectionKey.OP_READ);
                         }
                     }
