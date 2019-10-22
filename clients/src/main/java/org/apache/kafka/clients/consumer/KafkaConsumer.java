@@ -1083,6 +1083,8 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     private Map<TopicPartition, List<ConsumerRecord<K, V>>> pollOnce(long timeout) {
         client.maybeTriggerWakeup();
+        // coordinator 会启动一个heartbeat线程，定期的发送心跳信息到服务器（HeartbeatThread），如果两次调用poll的时间间隔过长（通过
+        // 参数max.poll.interval.ms 来配置，默认300s），则消费者会退出group（发送一个LeaveGroup的请求）
         coordinator.poll(time.milliseconds(), timeout);
 
         // fetch positions if we have partitions we're subscribed to that we
