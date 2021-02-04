@@ -218,6 +218,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         metadataCache = new MetadataCache(config.brokerId)
         credentialProvider = new CredentialProvider(config.saslEnabledMechanisms)
 
+        /* 实现了 reactor 模式，startup中启动了 Acceptor 线程，用于接收连接，在Acceptor线程中启动 Processor线程，Processor线程处理io */
         socketServer = new SocketServer(config, metrics, time, credentialProvider)
         socketServer.startup()
 

@@ -435,7 +435,9 @@ private[kafka] class Processor(val id: Int,
         // 这里为 newConnections 中的所有 channels 注册了 OP_READ 事件
         configureNewConnections()
         // register any new responses for writing
+        // 如果有响应需要返回，则注册OP_WRITE事件
         processNewResponses()
+        // 处理 select 出来的io事件
         poll()
         // 这里会将收到的数据放到待处理的队列尾部（requestChannel.requestQueue），而KafkaRequestHandler会从该队列的队首获取数据，
         // 随后在 selector 上停止对 OP_READ 事件的监听。
